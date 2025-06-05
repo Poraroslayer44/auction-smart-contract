@@ -5,7 +5,7 @@ This project implements a decentralized auction using Solidity, deployed on the 
 ## Contract Verified
 
 🔗 Verified contract address on Sepolia:  
-[https://sepolia.etherscan.io/address/YOUR_CONTRACT_ADDRESS](https://sepolia.etherscan.io/address/YOUR_CONTRACT_ADDRESS)
+[https://sepolia.etherscan.io/address/0x8f8705D8f3796fB3e1eED15Ef5426d2594cA966B](](https://sepolia.etherscan.io/address/0x8f8705D8f3796fB3e1eED15Ef5426d2594cA966B))
 
 ## Features
 
