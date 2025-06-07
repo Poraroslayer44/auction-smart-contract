@@ -1,105 +1,100 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.18;
 
 contract Auction {
     address public owner;
+    uint256 public auctionEndTime;
+    bool public ended;
+
     address public highestBidder;
-    uint public highestBid;
-    uint public startTime;
-    uint public endTime;
-    uint public commissionPercent = 2;
+    uint256 public highestBid;
 
-    struct Bid {
-        address bidder;
-        uint amount;
-    }
+    mapping(address => uint256) public userHighestBids;
+    mapping(address => uint256) public withdrawnAmounts;
 
-    mapping(address => uint[]) public userBids;
-    mapping(address => uint) public refundable;
-    Bid[] public bids;
+    event NewBid(address indexed bidder, uint256 amount);
+    event AuctionEnded(address winner, uint256 amount);
 
-    bool public ended = false;
-
-    event NewBid(address indexed bidder, uint amount);
-    event AuctionEnded(address winner, uint amount);
-
-    modifier onlyWhileActive() {
-        require(block.timestamp < endTime && !ended, "Auction has ended");
-        _;
+    constructor(uint256 durationMinutes) {
+        owner = msg.sender;
+        auctionEndTime = block.timestamp + (durationMinutes * 1 minutes);
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this");
+        require(msg.sender == owner, "Only the owner can call this");
         _;
     }
 
-    constructor(uint _durationMinutes) {
-        owner = msg.sender;
-        startTime = block.timestamp;
-        endTime = startTime + (_durationMinutes * 1 minutes);
+    modifier auctionActive() {
+        require(block.timestamp < auctionEndTime, "Auction has ended");
+        _;
     }
 
-    function placeBid() external payable onlyWhileActive {
-        require(msg.value > 0, "You must send ETH");
-        require(msg.value >= (highestBid * 105) / 100, "Bid must be at least 5% higher than current highest");
+    modifier auctionEnded() {
+        require(block.timestamp >= auctionEndTime || ended, "Auction is still active");
+        _;
+    }
 
-        if (userBids[msg.sender].length > 0) {
-            uint previousBid = userBids[msg.sender][userBids[msg.sender].length - 1];
-            refundable[msg.sender] += previousBid;
-        }
+    function placeBid() external payable auctionActive {
+        uint256 minBid = highestBid + (highestBid * 5 / 100);
+        require(msg.value >= minBid, "Bid must be at least 5% higher than current");
 
-        userBids[msg.sender].push(msg.value);
-        bids.push(Bid(msg.sender, msg.value));
-        highestBid = msg.value;
+        uint256 totalBid = userHighestBids[msg.sender] + msg.value;
+        require(totalBid >= minBid, "Combined bid too low");
+
+        userHighestBids[msg.sender] = totalBid;
+        highestBid = totalBid;
         highestBidder = msg.sender;
 
-        // Extend auction if bid placed within last 10 minutes
-        if (block.timestamp + 10 minutes > endTime) {
-            endTime = block.timestamp + 10 minutes;
+        // Extend auction time by 10 minutes if bid comes in last 10 minutes
+        if (auctionEndTime - block.timestamp <= 10 minutes) {
+            auctionEndTime += 10 minutes;
         }
 
-        emit NewBid(msg.sender, msg.value);
-    }
-
-    function getWinner() external view returns (address, uint) {
-        require(ended, "Auction is still active");
-        return (highestBidder, highestBid);
-    }
-
-    function getAllBids() external view returns (Bid[] memory) {
-        return bids;
+        emit NewBid(msg.sender, totalBid);
     }
 
     function endAuction() external onlyOwner {
         require(!ended, "Auction already ended");
-        require(block.timestamp >= endTime, "Auction still in progress");
-
+        require(block.timestamp >= auctionEndTime, "Auction still active");
         ended = true;
         emit AuctionEnded(highestBidder, highestBid);
     }
 
     function withdrawOverbid() external {
-        uint amount = refundable[msg.sender];
-        require(amount > 0, "Nothing to withdraw");
+        require(msg.sender != highestBidder, "Winner cannot withdraw overbids");
 
-        refundable[msg.sender] = 0;
-        payable(msg.sender).transfer(amount);
+        uint256 available = userHighestBids[msg.sender] - withdrawnAmounts[msg.sender];
+        require(available > 0, "No overbid to withdraw");
+
+        withdrawnAmounts[msg.sender] += available;
+        payable(msg.sender).transfer(available);
     }
 
-    function refundAllExceptWinner() external onlyOwner {
-        require(ended, "Auction must be ended first");
-
-        for (uint i = 0; i < bids.length; i++) {
-            address bidder = bids[i].bidder;
-            uint amount = bids[i].amount;
+    function refundAllExceptWinner(address[] calldata bidders) external onlyOwner auctionEnded {
+        for (uint256 i = 0; i < bidders.length; i++) {
+            address bidder = bidders[i];
 
             if (bidder != highestBidder) {
-                uint refund = (amount * (100 - commissionPercent)) / 100;
-                payable(bidder).transfer(refund);
+                uint256 refund = userHighestBids[bidder] - withdrawnAmounts[bidder];
+                if (refund > 0) {
+                    withdrawnAmounts[bidder] += refund;
+
+                    uint256 commission = (refund * 2) / 100;
+                    uint256 finalRefund = refund - commission;
+
+                    payable(bidder).transfer(finalRefund);
+                }
             }
         }
+    }
 
-        // Send commission to the owner
-        payable(owner).transfer(address(this).balance);
+    function getWinner() external view auctionEnded returns (address, uint256) {
+        return (highestBidder, highestBid);
+    }
+
+    function getUserBid(address user) external view returns (uint256) {
+        return userHighestBids[user];
     }
 }
+
